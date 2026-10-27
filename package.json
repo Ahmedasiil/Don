@@ -1,0 +1,16 @@
+{
+  "name": "oenodpay",
+  "private": true,
+  "version": "1.0.0",
+  "description": "oenodpay: send money worldwide, cards, bills, investing, credit and travel in one secure app (website, mobile app and super admin)",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "pnpm --filter @oenodpay/web dev",
+    "build": "pnpm --filter @oenodpay/web build",
+    "start": "pnpm --filter @oenodpay/web start",
+    "typecheck": "pnpm --filter @oenodpay/web typecheck",
+    "db:migrate": "pnpm --filter @oenodpay/web db:migrate",
+    "db:seed": "pnpm --filter @oenodpay/web db:seed",
+    "mobile": "pnpm --filter @oenodpay/mobile start"
+  }
+}

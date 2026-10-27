@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+dist
+.env
+.env.local
+*.log
+.expo
+apps/desktop/release
+.next-prod
+*.tsbuildinfo

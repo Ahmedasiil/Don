@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #F6F7F9; --paper: #FFFFFF; --ink: #0B1020; --navy: #0B1020; --blue: #2E5BFF; --sky: #EEF2FF; --line: #E7E9EF; --muted: #667085;
+  color-scheme: light;
+}
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body), "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+::selection { background: #C9D4FF; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+@layer components {
+  .blueprint { background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px); background-size: 40px 40px; background-position: -1px -1px; }
+  .card { @apply rounded-2xl border border-line bg-paper shadow-card; }
+  .card-pad { @apply card p-5; }
+  .btn { @apply inline-flex h-10 select-none items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-line bg-paper px-4 text-[13px] font-bold text-ink transition hover:-translate-y-px hover:shadow-card disabled:pointer-events-none disabled:opacity-50; }
+  .btn-pri { @apply btn border-transparent bg-navy text-white hover:bg-navy-600; }
+  .btn-blue { @apply btn border-transparent bg-blue text-white hover:bg-blue-600; }
+  .btn-ghost { @apply btn border-transparent bg-transparent shadow-none hover:bg-bg hover:shadow-none; }
+  .btn-danger { @apply btn border-[#F3C5CD] bg-[#FFF5F7] text-crit; }
+  .btn-sm { @apply h-8 rounded-lg px-3 text-xs; }
+  .input { @apply h-10 w-full rounded-xl border border-line bg-paper px-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-blue focus:ring-4 focus:ring-blue/10 disabled:bg-bg; }
+  textarea.input { @apply h-auto min-h-[96px] py-2.5; }
+  .label { @apply mb-1.5 block text-xs font-bold text-[#353C57]; }
+  .eyebrow { @apply font-mono text-[10.5px] font-medium uppercase tracking-[.14em] text-muted; }
+  .h1 { @apply font-display text-[26px] font-semibold tracking-tight; }
+  .h2 { @apply font-display text-lg font-semibold tracking-tight; }
+  .h3 { @apply font-display text-sm font-semibold; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-[11px] font-semibold text-[#353C57]; }
+  .table { @apply w-full border-separate border-spacing-0 text-[13px]; }
+  .table th { @apply sticky top-0 z-[1] border-b border-line bg-paper px-3 py-2.5 text-start text-[11px] font-bold uppercase tracking-wide text-muted; }
+  .table td { @apply border-b border-line px-3 py-3 align-middle; }
+  .table tbody tr { @apply transition hover:bg-bg/70; }
+  .navy-panel { background: linear-gradient(135deg, #000F55 0%, #0A1E8C 60%, #2342E0 130%); @apply relative overflow-hidden rounded-[20px] text-white shadow-lift; }
+  .navy-panel::before { content: ""; position: absolute; inset: 0; background-image: linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px); background-size: 28px 28px; mask-image: radial-gradient(70% 90% at 90% 20%, #000, transparent); pointer-events: none; }
+  .navy-panel > * { position: relative; }
+  .skeleton { @apply animate-shimmer rounded-lg bg-[linear-gradient(90deg,#EEF1F8,#F8F9FD,#EEF1F8)] bg-[length:200%_100%]; }
+  .prose-op h2 { @apply mb-2 mt-6 font-display text-lg font-semibold; }
+  .prose-op h3 { @apply mb-1 mt-4 font-display font-semibold; }
+  .prose-op p { @apply my-2 leading-7 text-[#2B3150]; }
+  .prose-op ul { @apply my-2 list-disc ps-5 leading-7; }
+  .prose-op ol { @apply my-2 list-decimal ps-5 leading-7; }
+  .prose-op strong { @apply font-bold text-ink; }
+  .prose-op code { @apply rounded bg-bg px-1 font-mono text-[12px]; }
+}
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+/* Map: soften OSM tiles to sit with the white-and-navy UI */
+.leaflet-tooltip { border-radius: 10px; border: 1px solid #E4E8F2; box-shadow: 0 8px 24px -12px rgba(0,15,85,.35); padding: 6px 10px; font-size: 12px; }
+@keyframes pulseRing { 0% { transform: scale(.7); opacity: .35 } 100% { transform: scale(1.6); opacity: 0 } }
+
+/* oenodpay: private-banking look, scoped to the Pay app */
+@layer components {
+  .pay-ui { --pay-ink: #0B1020; --pay-line: #E7E9EF; --pay-muted: #667085; font-feature-settings: "ss01", "cv11"; }
+  .pay-ui .card { @apply rounded-[18px] border-[#E7E9EF] shadow-[0_1px_2px_rgba(16,24,40,.04)]; }
+  .pay-ui .btn { @apply h-10 rounded-[11px] border-[#E2E5EC] text-[13px] font-semibold shadow-[0_1px_2px_rgba(16,24,40,.05)] hover:translate-y-0 hover:border-[#CDD2DC] hover:bg-[#FAFBFC] hover:shadow-[0_1px_2px_rgba(16,24,40,.05)]; }
+  .pay-ui .btn-pri { @apply border-transparent bg-[#0B1020] text-white hover:border-transparent hover:bg-[#1C2235]; }
+  .pay-ui .btn-blue { @apply border-transparent bg-blue text-white hover:border-transparent hover:bg-blue-600; }
+  .pay-ui .btn-ghost { @apply border-transparent shadow-none hover:border-transparent hover:bg-[#F2F4F7]; }
+  .pay-ui .btn-danger { @apply border-[#F4D3D9] bg-white text-crit hover:bg-[#FFF5F7]; }
+  .pay-ui .btn-sm { @apply h-8 rounded-[9px] px-3 text-[12px]; }
+  .pay-ui .input { @apply h-11 rounded-[11px] border-[#E2E5EC] focus:border-[#0B1020] focus:ring-[#0B1020]/[.06]; }
+  .pay-ui textarea.input { @apply h-auto; }
+  .pay-label { @apply text-[11px] font-semibold uppercase tracking-[.08em] text-[#667085]; }
+  .pay-h { @apply font-display text-[15px] font-semibold tracking-[-.01em] text-[#0B1020]; }
+  .pay-num { @apply font-display tabular-nums tracking-[-.02em]; }
+  .pay-tile { @apply flex items-center gap-3 rounded-[14px] border border-[#E7E9EF] bg-white px-4 py-3 text-start transition hover:border-[#CDD2DC] hover:bg-[#FAFBFC]; }
+  .pay-ico { @apply grid h-10 w-10 shrink-0 place-items-center rounded-[12px] bg-[#F2F4F7] text-[#0B1020]; }
+  .pay-row { @apply flex items-center gap-3 px-5 py-3.5 transition hover:bg-[#FAFBFC]; }
+}

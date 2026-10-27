@@ -1,0 +1,650 @@
+// oenodpay: one database shared by the website, the mobile app and the super admin.
+// Money is kept in a double-entry ledger (PayJournal + PayLedgerLine); balances are a cache of it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── People, sessions and the platform ─────────────────────────
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  name                  String
+  passwordHash          String?
+  phone                 String?   @unique
+  avatarUrl             String?
+  locale                String    @default("en")
+  isSuperAdmin          Boolean   @default(false)
+  emailVerifiedAt       DateTime?
+  tokenVersion          Int       @default(0)
+  // Consent for oenodpay's own marketing (CASL): only send when true, keep proof.
+  marketingEmailConsent Boolean   @default(false)
+  marketingSmsConsent   Boolean   @default(false)
+  consentAt             DateTime?
+  consentSource         String?
+  unsubscribedAt        DateTime?
+  pushToken             String?
+  lastSeenAt            DateTime?
+  // Security
+  totpSecret            String? // encrypted
+  totpEnabledAt         DateTime?
+  totpLastStep          Int?
+  recoveryCodes         String[] // sha256 of unused one-time codes
+  failedLogins          Int       @default(0)
+  lockedUntil           DateTime?
+  disabledAt            DateTime? // blocked by a super admin
+  passwordChangedAt     DateTime?
+  createdAt             DateTime  @default(now())
+  sessions              Session[]
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  device     String? // "Chrome on macOS", "oenodpay iPhone app"
+  client     String    @default("web") // web, mobile, desktop
+  ip         String?
+  userAgent  String?
+  mfa        Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+}
+
+model MessageLog {
+  id             String   @id @default(cuid())
+  scope          String   @default("PLATFORM") // PLATFORM, ORG
+  orgId          String?
+  channel        String
+  to             String
+  subject        String?
+  status         String   @default("QUEUED") // QUEUED, SENT, FAILED, SKIPPED_NO_CONSENT
+  providerId     String?
+  campaignId     String?
+  automationKey  String?
+  idempotencyKey String?  @unique
+  error          String?
+  createdAt      DateTime @default(now())
+
+  @@index([campaignId])
+}
+
+model PlatformSetting {
+  key       String   @id // e.g. STRIPE_SECRET_KEY
+  value     String // encrypted
+  plugin    String // stripe, resend, twilio, anthropic, google, microsoft...
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  actor     String? // "user", "ai", "api", "system", "super-admin"
+  action    String
+  entity    String?
+  entityId  String?
+  data      Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+}
+
+// ───────────────────────── Money ─────────────────────────
+
+model PayProfile {
+  id                 String    @id @default(cuid())
+  userId             String    @unique
+  // 0 = not verified (can't move money), 1 = ID verified, 2 = ID + address / enhanced checks
+  tier               Int       @default(0)
+  kycStatus          String    @default("NONE") // NONE, PENDING, VERIFIED, REVIEW, REJECTED
+  kycProvider        String?
+  kycSessionId       String?   @unique
+  kycReport          Json? // provider result: document type, country, checks (no images stored here)
+  legalName          String?
+  dob                DateTime?
+  country            String?
+  nationality        String?
+  idNumberLast4      String?
+  riskLevel          String    @default("LOW") // LOW, MEDIUM, HIGH
+  sanctionsHit       Boolean   @default(false)
+  pepHit             Boolean   @default(false)
+  screenedAt         DateTime?
+  frozenAt           DateTime?
+  frozenReason       String?
+  pinHash            String? // bcrypt of the 6-digit transaction PIN
+  pinFailed          Int       @default(0)
+  pinLockedUntil     DateTime?
+  stripeCustomerId   String?   @unique
+  stripeCardholderId String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// A balance in one currency. balanceCents is a cache of the ledger, updated in the same transaction.
+model PayWallet {
+  id           String          @id @default(cuid())
+  userId       String
+  currency     String
+  balanceCents Int             @default(0)
+  heldCents    Int             @default(0) // reserved for transfers in review
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  lines        PayLedgerLine[]
+
+  @@unique([userId, currency])
+}
+
+// Double-entry journal: every movement has lines that sum to zero per currency.
+model PayJournal {
+  id        String          @id @default(cuid())
+  userId    String
+  kind      String // TOPUP, TRANSFER, FEE, REVERSAL, ESIM, CARD, ADJUSTMENT
+  reference String          @unique // idempotency: the same reference can never post twice
+  memo      String?
+  createdAt DateTime        @default(now())
+  lines     PayLedgerLine[]
+
+  @@index([userId, createdAt])
+}
+
+model PayLedgerLine {
+  id          String     @id @default(cuid())
+  journalId   String
+  walletId    String?
+  account     String // "wallet", "clearing:stripe", "payout:airwallex", "payout:thunes", "revenue:fees", "esim:airalo"...
+  amountCents Int // + credit to the account, - debit
+  currency    String
+  journal     PayJournal @relation(fields: [journalId], references: [id], onDelete: Restrict)
+  wallet      PayWallet? @relation(fields: [walletId], references: [id], onDelete: Restrict)
+
+  @@index([walletId])
+}
+
+model PayTopUp {
+  id              String   @id @default(cuid())
+  userId          String
+  amountCents     Int
+  currency        String
+  stripeSessionId String   @unique
+  status          String   @default("PENDING") // PENDING, PAID, FAILED
+  createdAt       DateTime @default(now())
+}
+
+// Someone a person sends money to. Account numbers are encrypted at rest.
+model PayRecipient {
+  id           String        @id @default(cuid())
+  userId       String
+  name         String
+  country      String
+  currency     String
+  method       String // BANK, INSTAPAY, MOBILE_WALLET, CASH_PICKUP, CARD, COMPANY_WALLET, OENODPAY
+  network      String? // e.g. "Vodafone Cash", "InstaPay", "GCash", bank name
+  detailsEnc   String // encrypted JSON: account number / IBAN / phone / IPA address
+  label        String? // what the sender sees: "Vodafone Cash ···· 4321"
+  providerRef  String?
+  sanctionsHit Boolean       @default(false)
+  screenedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  transfers    PayTransfer[]
+
+  @@index([userId])
+}
+
+model PayTransfer {
+  id              String       @id @default(cuid())
+  userId          String
+  recipientId     String
+  sendCents       Int
+  sendCurrency    String
+  receiveCents    Int
+  receiveCurrency String
+  rate            Decimal      @db.Decimal(20, 8)
+  feeCents        Int
+  provider        String // airwallex, thunes, internal
+  providerRef     String?
+  status          String       @default("PROCESSING") // REVIEW, PROCESSING, SENT, DELIVERED, FAILED, CANCELLED, REFUNDED
+  failureReason   String?
+  idempotencyKey  String       @unique
+  riskFlags       String[]
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  ip              String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  recipient       PayRecipient @relation(fields: [recipientId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// Cards are issued by Stripe Issuing. holderUserId is the person using it (a teen on a family card).
+model PayCard {
+  id           String   @id @default(cuid())
+  userId       String // the account owner who pays
+  familyId     String?
+  stripeCardId String   @unique
+  type         String   @default("VIRTUAL") // VIRTUAL, PHYSICAL
+  last4        String
+  brand        String
+  expMonth     Int
+  expYear      Int
+  status       String   @default("ACTIVE") // ACTIVE, INACTIVE, CANCELED
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+// A teen (or other family member) on a parent's account, with the parent's spending rules.
+model PayFamilyMember {
+  id                    String    @id @default(cuid())
+  parentUserId          String
+  childUserId           String?
+  name                  String
+  birthYear             Int
+  inviteEmail           String?
+  status                String    @default("ACTIVE") // INVITED, ACTIVE, PAUSED
+  weeklyLimitCents      Int       @default(5000)
+  perPurchaseLimitCents Int?
+  approvalOverCents     Int?
+  blockedCategories     String[] // Stripe merchant categories, e.g. gambling, liquor_stores
+  allowedMerchants      String[]
+  nightLock             Boolean   @default(false) // no card payments from 22:00 to 06:00
+  onlineAllowed         Boolean   @default(true)
+  countries             String[] // empty = anywhere
+  allowanceCents        Int       @default(0)
+  allowanceWeekday      Int       @default(0) // 0 = Sunday
+  lastAllowanceAt       DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([parentUserId])
+}
+
+// Card payments a parent must approve, and every teen card decision (approved, declined and why).
+model PayCardEvent {
+  id           String   @id @default(cuid())
+  userId       String
+  familyId     String?
+  cardId       String?
+  stripeAuthId String?  @unique
+  merchant     String
+  category     String?
+  city         String?
+  country      String?
+  amountCents  Int
+  currency     String
+  decision     String // APPROVED, DECLINED
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PayWatch {
+  id         String    @id @default(cuid())
+  userId     String
+  symbol     String
+  kind       String // STOCK, CRYPTO, METAL, FX
+  alertAbove Float?
+  alertBelow Float?
+  alertedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@unique([userId, symbol])
+}
+
+model PayCoachThread {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  messages  Json
+  updatedAt DateTime @updatedAt
+}
+
+model PayEsimOrder {
+  id              String   @id @default(cuid())
+  userId          String
+  provider        String   @default("airalo")
+  packageId       String
+  country         String
+  title           String
+  dataLabel       String
+  days            Int
+  priceCents      Int
+  currency        String
+  status          String   @default("PROCESSING") // PROCESSING, READY, FAILED, REFUNDED
+  providerOrderId String?
+  iccid           String?
+  qrcodeUrl       String?
+  lpa             String? // activation code for manual install
+  journalRef      String?
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Anti-money-laundering alerts for the compliance team.
+model PayRiskEvent {
+  id         String    @id @default(cuid())
+  userId     String
+  kind       String // SANCTIONS_MATCH, PEP_MATCH, LARGE_TRANSFER, VELOCITY, STRUCTURING, NEW_RECIPIENT_BURST, HIGH_RISK_COUNTRY, KYC_FAILED, PIN_LOCKED
+  severity   String    @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  entity     String?
+  entityId   String?
+  details    Json?
+  status     String    @default("OPEN") // OPEN, CLEARED, ESCALATED, REPORTED
+  reviewedBy String?
+  note       String?
+  createdAt  DateTime  @default(now())
+  decidedAt  DateTime?
+
+  @@index([status, createdAt])
+  @@index([userId])
+}
+
+// ───────────────────────── Customer support desk and AI call center (super admin) ─────────────────────────
+
+model SupportCase {
+  id         String           @id @default(cuid())
+  userId     String?
+  name       String?
+  email      String?
+  phone      String?
+  channel    String           @default("CHAT") // CHAT, VOICE, EMAIL, APP
+  subject    String
+  status     String           @default("AI_HANDLING") // AI_HANDLING, WAITING_AGENT, WAITING_CUSTOMER, RESOLVED
+  priority   String           @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+  category   String? // TRANSFER, CARD, KYC, ACCOUNT, ESIM, FRAUD, OTHER
+  assigneeId String?
+  aiSummary  String?
+  sentiment  String? // POSITIVE, NEUTRAL, NEGATIVE
+  callSid    String?          @unique
+  csat       Int?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  resolvedAt DateTime?
+  messages   SupportMessage[]
+
+  @@index([status, updatedAt])
+  @@index([userId])
+}
+
+model SupportMessage {
+  id        String      @id @default(cuid())
+  caseId    String
+  from      String // CUSTOMER, AI, AGENT, SYSTEM
+  authorId  String?
+  body      String
+  internal  Boolean     @default(false) // agent-only note
+  createdAt DateTime    @default(now())
+  case      SupportCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, createdAt])
+}
+
+// One person asking another oenodpay member for money. Paid instantly wallet to wallet.
+model PayRequest {
+  id          String    @id @default(cuid())
+  fromUserId  String // who asks for the money and receives it
+  toUserId    String // who is asked to pay
+  amountCents Int
+  currency    String
+  note        String?
+  status      String    @default("PENDING") // PENDING, PAID, DECLINED, CANCELLED, EXPIRED
+  journalRef  String?
+  paidAt      DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([toUserId, status])
+  @@index([fromUserId, createdAt])
+}
+
+// The notification centre: money in and out, security, requests, cards, bills, investing, loans, rewards.
+model PayNotice {
+  id        String    @id @default(cuid())
+  userId    String
+  kind      String // MONEY_IN, MONEY_OUT, REQUEST, SECURITY, CARD, BILL, INVEST, LOAN, REWARD, SYSTEM
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ───────────────────────── Investing ─────────────────────────
+// Orders go to the broker (Alpaca) from oenodpay's omnibus account; each customer's share is kept here.
+
+model PayHolding {
+  id        String   @id @default(cuid())
+  userId    String
+  symbol    String
+  kind      String // STOCK, ETF, CRYPTO, METAL
+  quantity  Decimal  @db.Decimal(24, 10)
+  costCents Int // total cost basis in the wallet currency
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, symbol])
+}
+
+model PayTrade {
+  id             String    @id @default(cuid())
+  userId         String
+  symbol         String
+  kind           String
+  side           String // BUY, SELL
+  amountCents    Int // money in or out of the wallet, before the fee
+  feeCents       Int       @default(0)
+  quantity       Decimal?  @db.Decimal(24, 10)
+  priceCents     Int?
+  costCents      Int       @default(0) // cost basis released on a sell, for realised gain
+  status         String    @default("PENDING") // PENDING, FILLED, FAILED, CANCELLED
+  provider       String    @default("alpaca")
+  providerRef    String?
+  failureReason  String?
+  idempotencyKey String    @unique
+  createdAt      DateTime  @default(now())
+  filledAt       DateTime?
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// ───────────────────────── Bill pay ─────────────────────────
+
+// A company people pay bills to. Managed by the super admin.
+model PayBiller {
+  id           String         @id @default(cuid())
+  name         String
+  country      String
+  category     String // ELECTRICITY, GAS, WATER, PHONE, INTERNET, TV, TAX, INSURANCE, CREDIT_CARD, EDUCATION, OTHER
+  provider     String         @default("ops") // ops (paid by the operations team through the bank), fawry
+  providerCode String? // the biller's code at the provider or bank
+  accountLabel String         @default("Account number")
+  accountHint  String?
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  payees       PayBillPayee[]
+
+  @@index([country, active])
+}
+
+model PayBillPayee {
+  id         String           @id @default(cuid())
+  userId     String
+  billerId   String
+  nickname   String?
+  accountEnc String // encrypted account number
+  label      String // "Hydro One ···· 4421"
+  createdAt  DateTime         @default(now())
+  biller     PayBiller        @relation(fields: [billerId], references: [id], onDelete: Restrict)
+  payments   PayBillPayment[]
+
+  @@index([userId])
+}
+
+model PayBillPayment {
+  id             String       @id @default(cuid())
+  userId         String
+  payeeId        String
+  amountCents    Int
+  feeCents       Int          @default(0)
+  currency       String
+  status         String       @default("SCHEDULED") // SCHEDULED, PROCESSING, PAID, FAILED, CANCELLED, REFUNDED
+  scheduledFor   DateTime
+  repeat         String? // MONTHLY
+  confirmation   String? // the biller's or bank's confirmation number
+  failureReason  String?
+  journalRef     String?
+  idempotencyKey String       @unique
+  createdAt      DateTime     @default(now())
+  paidAt         DateTime?
+  payee          PayBillPayee @relation(fields: [payeeId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+  @@index([status, scheduledFor])
+}
+
+// ───────────────────────── Credit and loans ─────────────────────────
+
+// A personal loan funded from oenodpay's lending capital. Approved by a person, repaid automatically.
+model PayLoan {
+  id             String           @id @default(cuid())
+  userId         String
+  principalCents Int
+  aprBps         Int // 1299 = 12.99% a year
+  termMonths     Int
+  paymentCents   Int // monthly payment
+  purpose        String?
+  status         String           @default("REVIEW") // REVIEW, APPROVED, ACTIVE, PAID_OFF, DECLINED, DEFAULTED, CANCELLED
+  decisionNote   String?
+  decidedBy      String?
+  scoreAtApply   Int?
+  balanceCents   Int              @default(0) // principal still owed
+  nextDueAt      DateTime?
+  missed         Int              @default(0)
+  createdAt      DateTime         @default(now())
+  disbursedAt    DateTime?
+  closedAt       DateTime?
+  payments       PayLoanPayment[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model PayLoanPayment {
+  id             String    @id @default(cuid())
+  loanId         String
+  dueAt          DateTime
+  amountCents    Int
+  principalCents Int
+  interestCents  Int
+  status         String    @default("DUE") // DUE, PAID, MISSED
+  paidAt         DateTime?
+  journalRef     String?
+  loan           PayLoan   @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@index([loanId, dueAt])
+  @@index([status, dueAt])
+}
+
+// The oenodpay credit score (300-900), from how the account is run. A bureau score can be added later.
+model PayCreditScore {
+  id        String   @id @default(cuid())
+  userId    String
+  score     Int
+  band      String // POOR, FAIR, GOOD, VERY_GOOD, EXCELLENT
+  factors   Json
+  source    String   @default("oenodpay")
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ───────────────────────── Rewards ─────────────────────────
+
+model PayReward {
+  id          String   @id @default(cuid())
+  userId      String
+  kind        String // CASHBACK, REFERRAL, BONUS, REDEEMED
+  cents       Int // positive when earned, negative when redeemed
+  status      String   @default("PENDING") // PENDING (clears after a few days), AVAILABLE, REDEEMED, REVERSED
+  memo        String?
+  reference   String   @unique // idempotency: card transaction, referral, campaign
+  availableAt DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([userId, status])
+}
+
+model PayReferral {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  userId    String   @unique // the person who owns the code
+  createdAt DateTime @default(now())
+}
+
+model PayReferredUser {
+  id         String    @id @default(cuid())
+  referrerId String
+  userId     String    @unique // the new customer
+  rewardedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([referrerId])
+}
+
+// ───────────────────────── Travel ─────────────────────────
+
+// Flights and hotel stays booked through Duffel and paid from the wallet.
+model PayBooking {
+  id             String   @id @default(cuid())
+  userId         String
+  kind           String // FLIGHT, STAY
+  provider       String   @default("duffel")
+  offerId        String
+  orderId        String?
+  reference      String? // airline booking reference or hotel confirmation
+  title          String // "Toronto → Cairo, 12 Dec"
+  details        Json
+  amountCents    Int // charged to the wallet
+  currency       String
+  providerAmount String // the provider's price and currency, e.g. "812.40 USD"
+  status         String   @default("PROCESSING") // PROCESSING, CONFIRMED, FAILED, CANCELLED, REFUNDED
+  failureReason  String?
+  idempotencyKey String   @unique
+  createdAt      DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PayTravelThread {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  messages  Json
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,60 @@
+{
+  "expo": {
+    "name": "oenodpay",
+    "slug": "oenodpay",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "oenodpay",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.oenodpay.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "oenodpay uses Face ID to unlock the app and approve payments."
+      }
+    },
+    "android": {
+      "package": "com.oenodpay.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1020",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B1020",
+          "image": "./assets/splash.png",
+          "imageWidth": 220
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2E5BFF"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true,
+      "baseUrl": "/mobile"
+    },
+    "extra": {
+      "apiUrl": "https://oenodpay.com",
+      "eas": {
+        "projectId": "REPLACE_WITH_YOUR_EAS_PROJECT_ID"
+      }
+    },
+    "web": {
+      "output": "single",
+      "bundler": "metro"
+    }
+  }
+}
